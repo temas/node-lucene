@@ -1,15 +1,15 @@
-# project noname (1.0) configured on Fri Jun 24 12:09:02 2011 by
-# waf 1.5.16 (abi 7, python 20701f0 on darwin)
-# using /usr/local/bin/node-waf configure
+# project noname (1.0) configured on Tue Aug  2 18:40:24 2011 by
+# waf 1.5.16 (abi 7, python 20601f0 on darwin)
+# using /Users/eric/.nvm/v0.4.9/bin/node-waf configure
 #
 
 ----------------------------------------
 Setting srcdir to
-/Users/tyler/node-lucene
+/opt/node-lucene
 
 ----------------------------------------
 Setting blddir to
-/Users/tyler/node-lucene/build
+/opt/node-lucene/build
 
 ----------------------------------------
 Checking for program g++ or c++
@@ -37,8 +37,8 @@ ok
 
 ----------------------------------------
 Checking for node path 
-ok /Users/tyler/.node_libraries
+ok /Users/eric/.node_libraries
 
 ----------------------------------------
 Checking for node prefix 
-ok /usr/local
+ok /Users/eric/.nvm/v0.4.9
