@@ -246,7 +246,7 @@ class Lucene : public ObjectWrap {
 
             TryCatch try_catch;
 
-            baton->cb->Call(Context::GetCurrent()->Global(), 2f, argv);
+            baton->cb->Call(Context::GetCurrent()->Global(), 2, argv);
 
             if (try_catch.HasCaught()) {
               FatalException(try_catch);

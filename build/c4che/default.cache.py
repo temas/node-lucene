@@ -1,15 +1,15 @@
-AR = '/Developer/usr/bin/ar'
+AR = '/usr/bin/ar'
 ARFLAGS = 'rcs'
 CCFLAGS = ['-g']
 CCFLAGS_MACBUNDLE = ['-fPIC']
 CCFLAGS_NODE = ['-D_LARGEFILE_SOURCE', '-D_FILE_OFFSET_BITS=64']
 CC_VERSION = ('4', '2', '1')
 COMPILER_CXX = 'g++'
-CPP = '/Developer/usr/bin/cpp'
+CPP = '/usr/bin/cpp'
 CPPFLAGS_NODE = ['-D_GNU_SOURCE', '-DEV_MULTIPLICITY=0']
 CPPPATH_NODE = '/Volumes/Data/Users/eric/.nvm/v0.4.9/include/node'
 CPPPATH_ST = '-I%s'
-CXX = ['/Developer/usr/bin/g++']
+CXX = ['/usr/bin/g++']
 CXXDEFINES_ST = '-D%s'
 CXXFLAGS = ['-g']
 CXXFLAGS_DEBUG = ['-g']
@@ -28,11 +28,11 @@ LIBPATH_NODE = '/Volumes/Data/Users/eric/.nvm/v0.4.9/lib'
 LIBPATH_ST = '-L%s'
 LIB_ST = '-l%s'
 LINKFLAGS_MACBUNDLE = ['-bundle', '-undefined', 'dynamic_lookup']
-LINK_CXX = ['/Developer/usr/bin/g++']
+LINK_CXX = ['/usr/bin/g++']
 NODE_PATH = '/Users/eric/.node_libraries'
 PREFIX = '/usr/local'
 PREFIX_NODE = '/Volumes/Data/Users/eric/.nvm/v0.4.9'
-RANLIB = '/Developer/usr/bin/ranlib'
+RANLIB = '/usr/bin/ranlib'
 RPATH_ST = '-Wl,-rpath,%s'
 SHLIB_MARKER = ''
 SONAME_ST = ''
