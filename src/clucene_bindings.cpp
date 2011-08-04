@@ -239,13 +239,14 @@ class Lucene : public ObjectWrap {
             ev_unref(EV_DEFAULT_UC);
             baton->lucene->Unref();
 
-            Local<Value> argv[1];
+            Local<Value> argv[2];
 
-            argv[0] = baton->doc;
+            argv[0] = null;
+            argv[1] = baton->doc;
 
             TryCatch try_catch;
 
-            baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
+            baton->cb->Call(Context::GetCurrent()->Global(), 2f, argv);
 
             if (try_catch.HasCaught()) {
               FatalException(try_catch);
@@ -322,7 +323,7 @@ class Lucene : public ObjectWrap {
 
             Local<Value> argv[1];
 
-            argv[0] = baton->doc;
+            argv[0] = null;
 
             TryCatch try_catch;
 
@@ -368,7 +369,7 @@ class Lucene : public ObjectWrap {
 
             uint64_t str          = Misc::currentTimeMillis();
 
-            Document* doc         = (args[0];
+            Document* doc         = (args[0]);
             writer->addDocument(doc);
 
         // Make the index use as little files as possible, and optimize it

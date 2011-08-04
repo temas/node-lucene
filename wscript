@@ -8,6 +8,6 @@ def configure(conf):
 def build(bld):
   obj = bld.new_task_gen("cxx", "shlib", "node_addon")
   obj.cxxflags = ["-g", "-D_FILE_OFFSET_BITS=64", "-D_LARGEFILE_SOURCE", "-Wall"]
-  obj.target = "lucene_bindings"
-  obj.source = "src/lucene_bindings.cpp"
+  obj.target = "clucene"
+  obj.source = "src/clucene_bindings.cpp"
   obj.lib = "clucene-core"
