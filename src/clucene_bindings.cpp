@@ -197,9 +197,9 @@ protected:
         STRCPY_AtoT(value, *String::Utf8Value(args[1]), CL_MAX_DIR);
 
         _tprintf(_T("Going to add %S:%S:%d\n"), key, value, args[2]->Int32Value());
-        lucene::document::Field field(key, value, args[2]->Int32Value());
+        Field* field = _CLNEW Field(key, value, args[2]->Int32Value());
         printf("Created the field\n");
-        docWrapper->document()->add(field);
+        docWrapper->document()->add(*field);
         printf("Document added\n");
         
         if (try_catch.HasCaught()) {
@@ -286,6 +286,7 @@ class Lucene : public ObjectWrap {
             } else {
                 writer            = _CLNEW IndexWriter( *String::Utf8Value(args[1]) ,&an, true);
             }
+            printf("Setting writer to %s\n", *String::Utf8Value(args[1]));
         // We can tell the writer to flush at certain occasions
         //writer->setRAMBufferSizeMB(0.5);
         //writer->setMaxBufferedDocs(3);
@@ -299,7 +300,16 @@ class Lucene : public ObjectWrap {
             uint64_t str          = Misc::currentTimeMillis();
 
             LuceneDocument* doc = ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
-            writer->addDocument(doc->document());
+            printf("Got a doc at %p->%p\n", doc, doc->document());
+            try {
+                writer->addDocument(doc->document());
+            } catch (CLuceneError& E) {
+                printf("Got an exception: %s\n", E.what());
+            } catch(...) {
+                printf("Got an unknown exception\n");
+            }
+
+            printf("Done adding document\n");
 
         // Make the index use as little files as possible, and optimize it
             writer->setUseCompoundFile(true);
@@ -425,14 +435,13 @@ class Lucene : public ObjectWrap {
 
             //lucene->paths->Set(Number::New(0),String::New("foo"));
             SearchData *search = SearchFilesC(*String::Utf8Value(args[0]), *String::Utf8Value(args[1]));
-            v8::Local<v8::Array> ar = v8::Array::New(0);
+            Handle<v8::Array> ar = v8::Array::New(arrsize);
             //global vars ftw
             for (int i = 0; i < arrsize; i++) {
             //strcpy(utf,search[i].path);
-                ar->Set(v8::Number::New(i), String::New(search[i].path));
+                ar->Set(i, String::New(search[i].path));
             }
 
-            v8::Context::GetCurrent()->Global()->Set(v8::String::New("fiz"), ar);
             return scope.Close(ar);
         }
 };
