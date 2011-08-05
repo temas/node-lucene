@@ -23,6 +23,12 @@ using namespace lucene::queryParser;
 
 const static int CL_MAX_DIR = 220;
 
+#define REQ_FUN_ARG(I, VAR)                                             \
+  if (args.Length() <= (I) || !args[I]->IsFunction())                   \
+      return ThrowException(Exception::TypeError(                       \
+                  String::New("Argument " #I " must be a function")));  \
+  Local<Function> VAR = Local<Function>::Cast(args[I]);
+
 struct SearchData {
     const char* path;
     const char* score;
@@ -169,6 +175,7 @@ class Lucene : public ObjectWrap {
             NODE_SET_PROTOTYPE_METHOD(s_ct, "hello", Hello);
             NODE_SET_PROTOTYPE_METHOD(s_ct, "newDocument", NewDocument);
             NODE_SET_PROTOTYPE_METHOD(s_ct, "addField", AddField);
+            NODE_SET_PROTOTYPE_METHOD(s_ct, "addDocument", AddDocument);
             NODE_SET_PROTOTYPE_METHOD(s_ct, "indexFiles", IndexFiles);
             NODE_SET_PROTOTYPE_METHOD(s_ct, "indexText", IndexText);
             NODE_SET_PROTOTYPE_METHOD(s_ct, "search", SearchFiles);
@@ -194,80 +201,21 @@ class Lucene : public ObjectWrap {
             Local<String> result = String::New("Hello World");
             return scope.Close(result);
         }
-        
-        // NewDocument methods
-        struct lucene_doc_baton_t {
-            Lucene* lucene;
-            int increment_by;
-            Persistent<Document> doc;
-            Persistent<Function> cb;
-        };
 
         static Handle<Value> NewDocument(const Arguments& args) {
             HandleScope scope;
             REQ_FUN_ARG(0, cb);
             
-            Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
-            
-            lucene_doc_baton_t* baton = new lucene_doc_baton_t();
-            baton->lucene = lucene;
-            baton->increment_by = 2;
-            baton->doc = null;
-            baton->cb = Persistent<Function>::New(cb);
-            
-            lucene->Ref();
-
-            eio_custom(EIO_NewDocument, EIO_PRI_DEFAULT, EIO_AfterNewDocument, baton);
-            ev_ref(EV_DEFAULT_UC);
-
-            return Undefined();
-        }
-
-        static int EIO_NewDocument(eio_req *req) {
-            lucene_doc_baton_t *baton = static_cast<lucene_doc_baton_t *>(req->data);
-
-            baton->doc = _CLNEW Document();
-            baton->lucene->m_count += baton->increment_by;
-
-            return 0;
-        }
-        
-        static int EIO_AfterNewDocument(eio_req *req)
-          {
-            HandleScope scope;
-            lucene_doc_baton_t *baton = static_cast<lucene_doc_baton_t *>(req->data);
-            ev_unref(EV_DEFAULT_UC);
-            baton->lucene->Unref();
-
-            Local<Value> argv[2];
-
-            argv[0] = null;
-            argv[1] = baton->doc;
-
             TryCatch try_catch;
-
-            baton->cb->Call(Context::GetCurrent()->Global(), 2, argv);
-
+            
+            Persistent<Document> doc = _CLNEW Document();
+            
             if (try_catch.HasCaught()) {
               FatalException(try_catch);
             }
-
-            baton->cb.Dispose();
-
-            delete baton;
-            return 0;
-          }
-
-        // AddField methods
-        struct lucene_field_baton_t {
-            Lucene* lucene;
-            int increment_by;
-            Persistent<Document> doc;
-            Persistent<Value> key;
-            Persistent<Value> value;
-            Persistent<Value> config;
-            Persistent<Function> cb;
-        };
+            
+            return scope.Close(doc);
+        }
         
         // args:
         //   Document* doc
@@ -275,69 +223,25 @@ class Lucene : public ObjectWrap {
         //   String* value
         //   Integer flags
         static Handle<Value> AddField(const Arguments& args) {
-            HandleScope scope;
-            REQ_FUN_ARG(4, cb);
+            HandleScope scope;        
+            TryCatch try_catch;
             
-            Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
+            Local<Document> doc = args[0];
             
-            lucene_field_baton_t* baton = new lucene_field_baton_t();
-            baton->lucene = lucene;
-            baton->increment_by = 2;
-            baton->doc = args[0];
-            baton->key = args[1];
-            baton->value = args[2]; 
-            baton->config = args[3]; 
-            baton->cb = Persistent<Function>::New(cb);
-            
-            lucene->Ref();
-
-            eio_custom(EIO_AddField, EIO_PRI_DEFAULT, EIO_AfterAddField, baton);
-            ev_ref(EV_DEFAULT_UC);
-
-            return Undefined();
-        }
-        
-        static int EIO_AddField(eio_req *req) {
-            lucene_field_baton_t *baton = static_cast<lucene_field_baton_t *>(req->data);
-
             TCHAR key[CL_MAX_DIR];
-            STRCPY_AtoT(key, *String::Utf8Value(baton->key), CL_MAX_DIR);
+            STRCPY_AtoT(key, *String::Utf8Value(args[1]), CL_MAX_DIR);
 
             TCHAR value[CL_MAX_DIR];
-            STRCPY_AtoT(value, *String::Utf8Value(baton->value), CL_MAX_DIR);
+            STRCPY_AtoT(value, *String::Utf8Value(args[2]), CL_MAX_DIR);
 
-            doc->add(*_CLNEW Field(key, value, baton->config->Int32Value()));
+            doc->add(*_CLNEW Field(key, value, args[3]->Int32Value()));
             
-            baton->doc = _CLNEW Document();
-            baton->lucene->m_count += baton->increment_by;
-
-            return 0;
-        }
-        
-        static int EIO_AfterAddField(eio_req *req)
-          {
-            HandleScope scope;
-            lucene_doc_baton_t *baton = static_cast<lucene_doc_baton_t *>(req->data);
-            ev_unref(EV_DEFAULT_UC);
-            baton->lucene->Unref();
-
-            Local<Value> argv[1];
-
-            argv[0] = null;
-
-            TryCatch try_catch;
-
-            baton->cb->Call(Context::GetCurrent()->Global(), 1, argv);
-
             if (try_catch.HasCaught()) {
               FatalException(try_catch);
             }
-
-            baton->cb.Dispose();
-
-            delete baton;
-            return 0;
-          }
+            
+            return scope.Close(Undefined());
+        }
 
         // args:
         //   Document* doc
@@ -369,8 +273,8 @@ class Lucene : public ObjectWrap {
 
             uint64_t str          = Misc::currentTimeMillis();
 
-            Document* doc         = (args[0]);
-            writer->addDocument(doc);
+            Local<Document> doc = args[0];
+            writer->addDocument((Document*) doc);
 
         // Make the index use as little files as possible, and optimize it
             writer->setUseCompoundFile(true);
@@ -385,10 +289,6 @@ class Lucene : public ObjectWrap {
             Local<int32_t> millis = (int32_t)(Misc::currentTimeMillis() - str);
             return scope.Close(millis);
         }
-
-        
-
-
 
 
         static Handle<Value> IndexFiles(const Arguments& args) {
