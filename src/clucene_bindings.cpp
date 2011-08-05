@@ -153,6 +153,74 @@ void indexDocs(IndexWriter* writer, const char* directory) {
     }
 };
 
+class LuceneDocument : public ObjectWrap {
+public:
+    static void Initialize(v8::Handle<v8::Object> target) {
+        HandleScope scope;
+
+        Local<FunctionTemplate> t = FunctionTemplate::New(New);
+
+        t->InstanceTemplate()->SetInternalFieldCount(1);
+
+        NODE_SET_PROTOTYPE_METHOD(t, "addField", AddField);
+
+        target->Set(String::NewSymbol("Document"), t->GetFunction());
+    }
+
+    void setDocument(Document* doc) { doc_ = doc; }
+    Document* document() const { return doc_; }
+protected:
+    static Handle<Value> New(const Arguments& args) {
+        HandleScope scope;
+
+        LuceneDocument* newDoc = new LuceneDocument();
+        newDoc->Wrap(args.This());
+
+        return scope.Close(args.This());
+    }
+
+    // args:
+    //   String* key
+    //   String* value
+    //   Integer flags
+    static Handle<Value> AddField(const Arguments& args) {
+        HandleScope scope;
+        TryCatch try_catch;
+
+        LuceneDocument* docWrapper = ObjectWrap::Unwrap<LuceneDocument>(args.This());
+        printf("Got the document unwrapped\n");
+
+        TCHAR key[CL_MAX_DIR];
+        STRCPY_AtoT(key, *String::Utf8Value(args[0]), CL_MAX_DIR);
+
+        TCHAR value[CL_MAX_DIR];
+        STRCPY_AtoT(value, *String::Utf8Value(args[1]), CL_MAX_DIR);
+
+        _tprintf(_T("Going to add %S:%S:%d\n"), key, value, args[2]->Int32Value());
+        lucene::document::Field field(key, value, args[2]->Int32Value());
+        printf("Created the field\n");
+        docWrapper->document()->add(field);
+        printf("Document added\n");
+        
+        if (try_catch.HasCaught()) {
+            FatalException(try_catch);
+        }
+        
+        return scope.Close(Undefined());
+    }
+
+    LuceneDocument() : ObjectWrap(), doc_(_CLNEW Document) {
+        printf("Created new document %p\n", doc_);
+    }
+
+    ~LuceneDocument() {
+        delete doc_;
+        printf("Deleting a LuceneDocument\n");
+    }
+private:
+    Document* doc_;
+};
+
 class Lucene : public ObjectWrap {
 
     static Persistent<FunctionTemplate> s_ct;
@@ -173,8 +241,6 @@ class Lucene : public ObjectWrap {
             s_ct->SetClassName(String::NewSymbol("Lucene"));
 
             NODE_SET_PROTOTYPE_METHOD(s_ct, "hello", Hello);
-            NODE_SET_PROTOTYPE_METHOD(s_ct, "newDocument", NewDocument);
-            NODE_SET_PROTOTYPE_METHOD(s_ct, "addField", AddField);
             NODE_SET_PROTOTYPE_METHOD(s_ct, "addDocument", AddDocument);
             NODE_SET_PROTOTYPE_METHOD(s_ct, "indexFiles", IndexFiles);
             NODE_SET_PROTOTYPE_METHOD(s_ct, "indexText", IndexText);
@@ -200,47 +266,6 @@ class Lucene : public ObjectWrap {
             lucene->m_count++;
             Local<String> result = String::New("Hello World");
             return scope.Close(result);
-        }
-
-        static Handle<Value> NewDocument(const Arguments& args) {
-            HandleScope scope;
-            REQ_FUN_ARG(0, cb);
-            
-            TryCatch try_catch;
-            
-            Persistent<Document> doc = _CLNEW Document();
-            
-            if (try_catch.HasCaught()) {
-              FatalException(try_catch);
-            }
-            
-            return scope.Close(doc);
-        }
-        
-        // args:
-        //   Document* doc
-        //   String* key
-        //   String* value
-        //   Integer flags
-        static Handle<Value> AddField(const Arguments& args) {
-            HandleScope scope;        
-            TryCatch try_catch;
-            
-            Local<Document> doc = args[0];
-            
-            TCHAR key[CL_MAX_DIR];
-            STRCPY_AtoT(key, *String::Utf8Value(args[1]), CL_MAX_DIR);
-
-            TCHAR value[CL_MAX_DIR];
-            STRCPY_AtoT(value, *String::Utf8Value(args[2]), CL_MAX_DIR);
-
-            doc->add(*_CLNEW Field(key, value, args[3]->Int32Value()));
-            
-            if (try_catch.HasCaught()) {
-              FatalException(try_catch);
-            }
-            
-            return scope.Close(Undefined());
         }
 
         // args:
@@ -273,8 +298,8 @@ class Lucene : public ObjectWrap {
 
             uint64_t str          = Misc::currentTimeMillis();
 
-            Local<Document> doc = args[0];
-            writer->addDocument((Document*) doc);
+            LuceneDocument* doc = ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
+            writer->addDocument(doc->document());
 
         // Make the index use as little files as possible, and optimize it
             writer->setUseCompoundFile(true);
@@ -286,7 +311,7 @@ class Lucene : public ObjectWrap {
 
             printf("Indexing took: %d ms.\n\n", (int32_t)(Misc::currentTimeMillis() - str));
             IndexWriter(*String::Utf8Value(args[1]), &an, false);
-            Local<int32_t> millis = (int32_t)(Misc::currentTimeMillis() - str);
+            Local<Integer> millis = Int32::NewFromUnsigned((uint32_t)(Misc::currentTimeMillis() - str));
             return scope.Close(millis);
         }
 
@@ -414,10 +439,9 @@ class Lucene : public ObjectWrap {
 
 Persistent<FunctionTemplate> Lucene::s_ct;
 
-extern "C" {
-
-    static void init (Handle<Object> target) {
-        Lucene::Init(target);
-    }
-    NODE_MODULE(lucene_bindings, init);
+extern "C" void init(Handle<Object> target) {
+    Lucene::Init(target);
+    LuceneDocument::Initialize(target);
 }
+
+NODE_MODULE(clucene_bindings, init);
