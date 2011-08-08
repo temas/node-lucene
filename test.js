@@ -3,10 +3,12 @@ var cl = require("./clucene").CLucene;
 var lucene = new cl.Lucene;
 var doc = new cl.Document;
 
-console.log("Created the lucene and doc, now adding the field.");
-doc.addField("Key", "Value", 33);
-console.log("Field added");
+doc.addField("_id", "1234", 65);
+doc.addField("name", "Thomas Muldowney", 33);
 lucene.addDocument(doc, "test.lc");
-console.log("Added the document");
-console.dir(lucene.search("test.lc", "*:*"));
+lucene.search("test.lc", "*:Muld*", function(err, results) {
+    console.log("Got error: " + err);
+    console.log("Results:");
+    console.dir(results);
+});
 
