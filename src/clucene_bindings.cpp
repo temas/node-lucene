@@ -144,13 +144,12 @@ class Lucene : public ObjectWrap {
             return args.This();
         }
         
-        struct index_baton_t
-        {
+        struct index_baton_t {
             Lucene* lucene;         
-            Persistent<LuceneDocument>* doc;
+            LuceneDocument* doc;
             v8::String::Utf8Value* index;
             Persistent<Function> callback;
-            v8::Uint32 indexTime;
+            uint64_t indexTime;
         };
         
         // args:
@@ -164,7 +163,7 @@ class Lucene : public ObjectWrap {
 
             index_baton_t* baton = new index_baton_t;
             baton->lucene = lucene;
-            baton->doc = (Persistent<LuceneDocument>*)ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
+            baton->doc = ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
             baton->index = new v8::String::Utf8Value(args[1]);
             baton->callback = Persistent<Function>::New(callback);
 
@@ -183,16 +182,17 @@ class Lucene : public ObjectWrap {
             IndexWriter* writer = NULL;
             lucene::analysis::standard::StandardAnalyzer an;
 
-            if (IndexReader::indexExists((char*)baton->index)){
-                if ( IndexReader::isLocked((char*)baton->index)) {
+            if (IndexReader::indexExists(*(*baton->index))) {
+                if (IndexReader::isLocked(*(*baton->index))) {
                     printf("Index was locked... unlocking it.\n");
-                    IndexReader::unlock((char*)baton->index);
+                    IndexReader::unlock(*(*baton->index));
                 }
-                writer = _CLNEW IndexWriter((char*)baton->index, &an, false);
+                writer = _CLNEW IndexWriter(*(*baton->index), &an, false);
             } else {
-                writer = _CLNEW IndexWriter((char*)baton->index, &an, true);
+                writer = _CLNEW IndexWriter(*(*baton->index), &an, true);
             }
-            printf("Setting writer to %s\n", (char*)baton->index);
+            
+            printf("Setting writer to %s\n", *(*baton->index));
             // We can tell the writer to flush at certain occasions
             //writer->setRAMBufferSizeMB(0.5);
             //writer->setMaxBufferedDocs(3);
@@ -201,7 +201,7 @@ class Lucene : public ObjectWrap {
             writer->setMaxFieldLength(0x7FFFFFFFL); // LUCENE_INT32_MAX_SHOULDBE
             // Turn this off to make indexing faster; we'll turn it on later before optimizing
             writer->setUseCompoundFile(false);
-            uint64_t str = Misc::currentTimeMillis();
+            uint64_t start = Misc::currentTimeMillis();
 
             try {
               writer->addDocument((Document*)baton->doc);
@@ -220,11 +220,11 @@ class Lucene : public ObjectWrap {
             // Close and clean up
             writer->close();
             _CLLDELETE(writer);
-
-            baton->indexTime = (Misc::currentTimeMillis() - str);
             
-            printf("Indexing took: %d ms.\n\n", baton->indexTime);
-            IndexWriter((char*)baton->index, &an, false);
+            baton->indexTime = (Misc::currentTimeMillis() - start);
+            
+            printf("Indexing took: %d ms.\n\n", (uint32_t)(baton->indexTime));
+            IndexWriter(*(*baton->index), &an, false);
 
             return 0;
         }
@@ -238,7 +238,7 @@ class Lucene : public ObjectWrap {
             Handle<Value> argv[2];
 
             argv[0] = Null(); // Error arg, defaulting to no error
-            argv[1] = baton->indexTime;
+            argv[1] = v8::Integer::NewFromUnsigned((uint32_t)baton->indexTime);
 
             TryCatch tryCatch;
 
@@ -248,9 +248,9 @@ class Lucene : public ObjectWrap {
                 FatalException(tryCatch);
             }
 
-            baton->doc->Dispose();
             baton->callback.Dispose();
 
+            delete baton->index;
             delete baton;
             return 0;
         }
