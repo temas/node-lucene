@@ -204,7 +204,7 @@ class Lucene : public ObjectWrap {
             uint64_t start = Misc::currentTimeMillis();
 
             try {
-              writer->addDocument((Document*)baton->doc);
+              writer->addDocument(baton->doc->document());
             } catch (CLuceneError& E) {
               printf("Got an exception: %s\n", E.what());
             } catch(...) {
