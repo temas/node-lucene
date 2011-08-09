@@ -1,7 +1,15 @@
-var cl = require("./clucene").CLucene;
+var cl     = require("./clucene").CLucene;
 
 var lucene = new cl.Lucene();
-var doc = new cl.Document();
+var doc    = new cl.Document();
+
+lucene.addDocument(doc, "/private/var/virusmails/test.lc", function(err, indexTime) {
+    if (err) {
+        console.log("Successfully handled error in attempting index w/o permissions");
+    } else {
+        console.log("Did not handle error correctly in attempting index w/o permissions");
+    }
+});
 
 try {
     doc.addField(1, "test", 65);

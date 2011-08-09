@@ -151,6 +151,7 @@ public:
         v8::String::Utf8Value* index;
         Persistent<Function> callback;
         uint64_t indexTime;
+        v8::String* error;
     };
     
     // args:
@@ -171,7 +172,8 @@ public:
         baton->doc = ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
         baton->index = new v8::String::Utf8Value(args[1]);
         baton->callback = Persistent<Function>::New(callback);
-
+        baton->error = 0;
+        
         lucene->Ref();
 
         eio_custom(EIO_Index, EIO_PRI_DEFAULT, EIO_AfterIndex, baton);
@@ -185,46 +187,47 @@ public:
         index_baton_t* baton = static_cast<index_baton_t*>(req->data);
 
         lucene::analysis::standard::StandardAnalyzer an;
-
         IndexWriter* writer = 0;
-        bool needsCreation = true;
-        if (IndexReader::indexExists(*(*baton->index))) {
-            if (IndexReader::isLocked(*(*baton->index))) {
-                IndexReader::unlock(*(*baton->index));
-            }
-            needsCreation = false;
-        }
-        writer = new IndexWriter(*(*baton->index), &an, needsCreation);
+        bool writerOpen = false;
         
-        // To bypass a possible exception (we have no idea what we will be indexing...)
-        writer->setMaxFieldLength(0x7FFFFFFFL); // LUCENE_INT32_MAX_SHOULDBE
-        // Turn this off to make indexing faster; we'll turn it on later before optimizing
-        writer->setUseCompoundFile(false);
-        uint64_t start = Misc::currentTimeMillis();
-
-        // TODO:  How do we pass on the error here?  We might need to add to the baton
         try {
+          bool needsCreation = true;
+          if (IndexReader::indexExists(*(*baton->index))) {
+              if (IndexReader::isLocked(*(*baton->index))) {
+                  IndexReader::unlock(*(*baton->index));
+              }
+              needsCreation = false;
+          }
+          writer = new IndexWriter(*(*baton->index), &an, needsCreation);
+          writerOpen = true;
+        
+          // To bypass a possible exception (we have no idea what we will be indexing...)
+          writer->setMaxFieldLength(0x7FFFFFFFL); // LUCENE_INT32_MAX_SHOULDBE
+          // Turn this off to make indexing faster; we'll turn it on later before optimizing
+          writer->setUseCompoundFile(false);
+          uint64_t start = Misc::currentTimeMillis();
+
           writer->addDocument(baton->doc->document());
+          
+          // Make the index use as little files as possible, and optimize it
+          writer->setUseCompoundFile(true);
+          writer->optimize();
+
+          baton->indexTime = (Misc::currentTimeMillis() - start);
         } catch (CLuceneError& E) {
           printf("Got an exception: %s\n", E.what());
+          baton->error = *String::New(E.what());
         } catch(...) {
           printf("Got an unknown exception\n");
+          baton->error = *String::New("Got an unknown exception\n");
         }
-
-        printf("Done adding document\n");
-
-        // Make the index use as little files as possible, and optimize it
-        writer->setUseCompoundFile(true);
-        writer->optimize();
-
+        
         // Close and clean up
-        writer->close();
+        if (writerOpen == true) {
+           writer->close();
+        }       
         delete writer;
-        
-        baton->indexTime = (Misc::currentTimeMillis() - start);
-        
-        printf("Indexing took: %d ms.\n\n", (uint32_t)(baton->indexTime));
-        IndexWriter(*(*baton->index), &an, false);
+        //(*(*baton->index), &an, false);
 
         return 0;
     }
@@ -237,8 +240,15 @@ public:
 
         Handle<Value> argv[2];
 
-        argv[0] = Null(); // Error arg, defaulting to no error
-        argv[1] = v8::Integer::NewFromUnsigned((uint32_t)baton->indexTime);
+        if (baton->error != NULL) {
+            Local<String> err = baton->error;
+            argv[0] = Exception::Error(err);
+            argv[1] = Undefined();
+        }
+        else {
+            argv[0] = Undefined();
+            argv[1] = v8::Integer::NewFromUnsigned((uint32_t)baton->indexTime);
+        }
 
         TryCatch tryCatch;
 
@@ -249,7 +259,6 @@ public:
         }
 
         baton->callback.Dispose();
-
         delete baton->index;
         delete baton;
         return 0;
