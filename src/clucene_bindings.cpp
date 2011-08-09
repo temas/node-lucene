@@ -29,16 +29,14 @@ const static int CL_MAX_DIR = 220;
                   String::New("Argument " #I " must be a function")));  \
   Local<Function> VAR = Local<Function>::Cast(args[I]);
 
-class TCharWrapper : public String::ExternalStringResource {
-public:
-    TCharWrapper(const TCHAR* tcharToWrap) : String::ExternalStringResource(), tchar_(tcharToWrap)
-    { }
+#define REQ_STR_ARG(I) \
+  if (args.Length() <= (I) || !args[I]->IsString()) \
+      return ThrowException(Exception::TypeError(String::New("Argument " #I " must be a string")));
 
-    const uint16_t* data() const { return reinterpret_cast<const uint16_t*>(tchar_); }
-    size_t length() const { return _tcslen(tchar_); }
-private:
-    const TCHAR* tchar_;
-};
+#define REQ_UINT_ARG(I) \
+  if (args.Length() <= (I) || !args[I]->IsUint32()) \
+      return ThrowException(Exception::TypeError(String::New("Argument " #I " must be a unsigned integer")));
+  
 
 class LuceneDocument : public ObjectWrap {
 public:
@@ -73,6 +71,10 @@ protected:
     static Handle<Value> AddField(const Arguments& args) {
         HandleScope scope;
         TryCatch try_catch;
+
+        REQ_STR_ARG(0);
+        REQ_STR_ARG(1);
+        REQ_UINT_ARG(2);
 
         LuceneDocument* docWrapper = ObjectWrap::Unwrap<LuceneDocument>(args.This());
         printf("Got the document unwrapped\n");
