@@ -29,128 +29,15 @@ const static int CL_MAX_DIR = 220;
                   String::New("Argument " #I " must be a function")));  \
   Local<Function> VAR = Local<Function>::Cast(args[I]);
 
-struct SearchData {
-    const char* path;
-    const char* score;
-};
+class TCharWrapper : public String::ExternalStringResource {
+public:
+    TCharWrapper(const TCHAR* tcharToWrap) : String::ExternalStringResource(), tchar_(tcharToWrap)
+    { }
 
-int arrsize;
-
-
-SearchData *SearchFilesC(const char* index, const char* fobizzle) {
-
-    standard::StandardAnalyzer analyzer;
-    char line[80];
-    TCHAR tline[80];
-    TCHAR* buf;
-
-    IndexReader* reader = IndexReader::open(index);
-
-    //printf("Enter query string: ");
-    strncpy(line,fobizzle,80);
-    //line[strlen(line)-1]=0;
-
-
-    IndexReader* newreader = reader->reopen();
-    if ( newreader != reader ) {
-        _CLLDELETE(reader);
-        reader = newreader;
-    }
-
-    IndexSearcher s(reader);
-
-    STRCPY_AtoT(tline,line,80);
-    Query* q = QueryParser::parse(tline,_T("contents"),&analyzer);
-    buf = q->toString(_T("contents"));
-
-    _tprintf(_T("Searching for: %S\n\n"), buf);
-    _CLDELETE_LCARRAY(buf);
-
-    uint64_t str = Misc::currentTimeMillis();
-    Hits* h = s.search(q);
-    uint32_t srch = (int32_t)(Misc::currentTimeMillis() - str);
-    str = Misc::currentTimeMillis();
-    arrsize = h->length();
-    SearchData *search = new SearchData[h->length()];
-    for (size_t i=0; i < h->length(); i++) {
-        Document* doc = &h->doc(i);
-            //const TCHAR* buf = doc.get(_T("contents"));
-        _tprintf(_T("%d. %S - %f\n"), i, doc->get(_T("path")), h->score(i));
-            //const TCHAR* wtfbatman;
-            //wtfbatman =  doc->get(_T("path"));
-            //search[(int)i].score =  h->score(i);
-            //printf("Adding %S %d\n", search[i].path, i);
-        char *wtfbbq;
-        wtfbbq = new char[100];
-        sprintf(wtfbbq,"%S %f", doc->get(_T("path")), h->score(i));
-        search[(int)i].path = wtfbbq;
-            //sprintf(str,"%S", String::New((char*)doc->get(_T("path")),5));
-            //printf("PIZZA %s\n", wtfbbq);
-            //sprintf(search[i].path,"%S",(const char*)doc->get(_T("path")));
-            //printf("segfault");
-            //strcpy(search[i].path,(const char*)doc->get(_T("path")));
-
-    }
-
-
-    printf("\n\nSearch took: %d ms.\n", srch);
-    printf("Screen dump took: %d ms.\n\n", (int32_t)(Misc::currentTimeMillis() - str));
-
-        //_CLLDELETE(h);
-        //_CLLDELETE(q);
-
-        //s.close();
-
-    //reader->close();
-    //_CLLDELETE(reader);
-    //printf("Testing %S\n\n", search[0].path);
-    return search;
-};
-
-void FileDocument(const char* f, Document* doc){
-
-    TCHAR tf[CL_MAX_DIR];
-    STRCPY_AtoT(tf,f,CL_MAX_DIR);
-    doc->add( *_CLNEW Field(_T("path"), tf, Field::STORE_YES | Field::INDEX_UNTOKENIZED ) );
-
-    FILE* fh = fopen(f,"r");
-    if (fh != NULL) {
-        StringBuffer str;
-        char abuf[1024];
-        TCHAR tbuf[1024];
-        size_t r;
-        do {
-            r = fread(abuf,1,1023,fh);
-            abuf[r]=0;
-            STRCPY_AtoT(tbuf,abuf,r);
-            tbuf[r]=0;
-            str.append(tbuf);
-        } while(r > 0);
-        
-        fclose(fh);
-        doc->add(*_CLNEW Field(_T("contents"), str.getBuffer(), Field::STORE_YES | Field::INDEX_TOKENIZED));
-    }
-}
-
-void indexDocs(IndexWriter* writer, const char* directory) {
-    
-    vector<string> files;
-    std::sort(files.begin(),files.end());
-    Misc::listFiles(directory,files,true);
-    vector<string>::iterator itr = files.begin();
-
-    // Re-use the document object
-    Document doc;
-    int i=0;
-    while (itr != files.end()) {
-        const char* path = itr->c_str();
-        printf("adding file %d: %s\n", ++i, path);
-
-        doc.clear();
-        FileDocument(path, &doc);
-        writer->addDocument(&doc);
-        ++itr;
-    }
+    const uint16_t* data() const { return reinterpret_cast<const uint16_t*>(tchar_); }
+    size_t length() const { return _tcslen(tchar_); }
+private:
+    const TCHAR* tchar_;
 };
 
 class LuceneDocument : public ObjectWrap {
@@ -240,11 +127,8 @@ class Lucene : public ObjectWrap {
             s_ct->InstanceTemplate()->SetInternalFieldCount(1);
             s_ct->SetClassName(String::NewSymbol("Lucene"));
 
-            NODE_SET_PROTOTYPE_METHOD(s_ct, "hello", Hello);
-            NODE_SET_PROTOTYPE_METHOD(s_ct, "addDocument", AddDocument);
-            NODE_SET_PROTOTYPE_METHOD(s_ct, "indexFiles", IndexFiles);
-            NODE_SET_PROTOTYPE_METHOD(s_ct, "indexText", IndexText);
-            NODE_SET_PROTOTYPE_METHOD(s_ct, "search", SearchFiles);
+            NODE_SET_PROTOTYPE_METHOD(s_ct, "addDocument", AddDocumentAsync);
+            NODE_SET_PROTOTYPE_METHOD(s_ct, "search", SearchAsync);
 
             target->Set(String::NewSymbol("Lucene"), s_ct->GetFunction());
         }
@@ -259,190 +143,213 @@ class Lucene : public ObjectWrap {
             lucene->Wrap(args.This());
             return args.This();
         }
-
-        static Handle<Value> Hello(const Arguments& args) {
-            HandleScope scope;
-            Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
-            lucene->m_count++;
-            Local<String> result = String::New("Hello World");
-            return scope.Close(result);
-        }
-
+        
+        struct index_baton_t
+        {
+            Lucene* lucene;         
+            Persistent<LuceneDocument>* doc;
+            v8::String::Utf8Value* index;
+            Persistent<Function> callback;
+            v8::Uint32 indexTime;
+        };
+        
         // args:
         //   Document* doc
         //   String* indexPath
-        static Handle<Value> AddDocument(const Arguments& args) {
+        static Handle<Value> AddDocumentAsync(const Arguments& args) {
             HandleScope scope;
-            IndexWriter* writer   = NULL;
+
+            Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
+            REQ_FUN_ARG(2, callback);
+
+            index_baton_t* baton = new index_baton_t;
+            baton->lucene = lucene;
+            baton->doc = (Persistent<LuceneDocument>*)ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
+            baton->index = new v8::String::Utf8Value(args[1]);
+            baton->callback = Persistent<Function>::New(callback);
+
+            lucene->Ref();
+
+            eio_custom(EIO_Index, EIO_PRI_DEFAULT, EIO_AfterIndex, baton);
+            ev_ref(EV_DEFAULT_UC);
+
+            return scope.Close(Undefined());
+        }
+            
+        
+        static int EIO_Index(eio_req* req) {
+            index_baton_t* baton = static_cast<index_baton_t*>(req->data);
+
+            IndexWriter* writer = NULL;
             lucene::analysis::standard::StandardAnalyzer an;
 
-            if (IndexReader::indexExists(*String::Utf8Value(args[1])) ){
-                if ( IndexReader::isLocked(*String::Utf8Value(args[1])) ){
+            if (IndexReader::indexExists((char*)baton->index)){
+                if ( IndexReader::isLocked((char*)baton->index)) {
                     printf("Index was locked... unlocking it.\n");
-                    IndexReader::unlock(*String::Utf8Value(args[1]));
+                    IndexReader::unlock((char*)baton->index);
                 }
-
-                writer            = _CLNEW IndexWriter( *String::Utf8Value(args[1]), &an, false);
+                writer = _CLNEW IndexWriter((char*)baton->index, &an, false);
             } else {
-                writer            = _CLNEW IndexWriter( *String::Utf8Value(args[1]) ,&an, true);
+                writer = _CLNEW IndexWriter((char*)baton->index, &an, true);
             }
-            printf("Setting writer to %s\n", *String::Utf8Value(args[1]));
-        // We can tell the writer to flush at certain occasions
-        //writer->setRAMBufferSizeMB(0.5);
-        //writer->setMaxBufferedDocs(3);
+            printf("Setting writer to %s\n", (char*)baton->index);
+            // We can tell the writer to flush at certain occasions
+            //writer->setRAMBufferSizeMB(0.5);
+            //writer->setMaxBufferedDocs(3);
 
-        // To bypass a possible exception (we have no idea what we will be indexing...)
+            // To bypass a possible exception (we have no idea what we will be indexing...)
             writer->setMaxFieldLength(0x7FFFFFFFL); // LUCENE_INT32_MAX_SHOULDBE
-
-        // Turn this off to make indexing faster; we'll turn it on later before optimizing
+            // Turn this off to make indexing faster; we'll turn it on later before optimizing
             writer->setUseCompoundFile(false);
+            uint64_t str = Misc::currentTimeMillis();
 
-            uint64_t str          = Misc::currentTimeMillis();
-
-            LuceneDocument* doc = ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
-            printf("Got a doc at %p->%p\n", doc, doc->document());
             try {
-                writer->addDocument(doc->document());
+              writer->addDocument((Document*)baton->doc);
             } catch (CLuceneError& E) {
-                printf("Got an exception: %s\n", E.what());
+              printf("Got an exception: %s\n", E.what());
             } catch(...) {
-                printf("Got an unknown exception\n");
+              printf("Got an unknown exception\n");
             }
 
             printf("Done adding document\n");
 
-        // Make the index use as little files as possible, and optimize it
+            // Make the index use as little files as possible, and optimize it
             writer->setUseCompoundFile(true);
             writer->optimize();
 
-        // Close and clean up
+            // Close and clean up
             writer->close();
             _CLLDELETE(writer);
 
-            printf("Indexing took: %d ms.\n\n", (int32_t)(Misc::currentTimeMillis() - str));
-            IndexWriter(*String::Utf8Value(args[1]), &an, false);
-            Local<Integer> millis = Int32::NewFromUnsigned((uint32_t)(Misc::currentTimeMillis() - str));
-            return scope.Close(millis);
+            baton->indexTime = (Misc::currentTimeMillis() - str);
+            
+            printf("Indexing took: %d ms.\n\n", baton->indexTime);
+            IndexWriter((char*)baton->index, &an, false);
+
+            return 0;
         }
 
-
-        static Handle<Value> IndexFiles(const Arguments& args) {
+        static int EIO_AfterIndex(eio_req* req) {
             HandleScope scope;
-            IndexWriter* writer = NULL;
-            lucene::analysis::WhitespaceAnalyzer an;
+            index_baton_t* baton = static_cast<index_baton_t*>(req->data);
+            ev_unref(EV_DEFAULT_UC);
+            baton->lucene->Unref();
 
-            if (IndexReader::indexExists(*String::Utf8Value(args[1])) ){
-                if ( IndexReader::isLocked(*String::Utf8Value(args[1])) ){
-                    printf("Index was locked... unlocking it.\n");
-                    IndexReader::unlock(*String::Utf8Value(args[1]));
-                }
+            Handle<Value> argv[2];
 
-                writer = _CLNEW IndexWriter( *String::Utf8Value(args[1]), &an, false);
-            } else {
-                writer = _CLNEW IndexWriter( *String::Utf8Value(args[1]) ,&an, true);
+            argv[0] = Null(); // Error arg, defaulting to no error
+            argv[1] = baton->indexTime;
+
+            TryCatch tryCatch;
+
+            baton->callback->Call(Context::GetCurrent()->Global(), 2, argv);
+
+            if (tryCatch.HasCaught()) {
+                FatalException(tryCatch);
             }
 
-          //writer->setInfoStream(&std::cout);
+            baton->doc->Dispose();
+            baton->callback.Dispose();
 
-          // We can tell the writer to flush at certain occasions
-          //writer->setRAMBufferSizeMB(0.5);
-          //writer->setMaxBufferedDocs(3);
-
-          // To bypass a possible exception (we have no idea what we will be indexing...)
-            writer->setMaxFieldLength(0x7FFFFFFFL); // LUCENE_INT32_MAX_SHOULDBE
-
-          // Turn this off to make indexing faster; we'll turn it on later before optimizing
-            writer->setUseCompoundFile(false);
-
-            uint64_t str = Misc::currentTimeMillis();
-
-            indexDocs(writer, *String::Utf8Value(args[0]));
-
-          // Make the index use as little files as possible, and optimize it
-            writer->setUseCompoundFile(true);
-            writer->optimize();
-
-          // Close and clean up
-            writer->close();
-            _CLLDELETE(writer);
-
-            printf("Indexing took: %d ms.\n\n", (int32_t)(Misc::currentTimeMillis() - str));IndexWriter(*String::Utf8Value(args[1]), &an, false);
-
-          //Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
-
-            return scope.Close(String::New("foo"));
+            delete baton;
+            return 0;
         }
+        
 
-        static Handle<Value> IndexText(const Arguments& args)
+        struct search_baton_t
         {
+            Lucene* lucene;
+            v8::String::Utf8Value* index;
+            v8::String::Utf8Value* search;
+            Persistent<Function> callback;
+            Persistent<v8::Array> results;
+        };
+
+        static Handle<Value> SearchAsync(const Arguments& args) {
             HandleScope scope;
-            IndexWriter* writer = NULL;
-            lucene::analysis::WhitespaceAnalyzer an;
 
-            if (IndexReader::indexExists(*String::Utf8Value(args[2])) ){
-                if ( IndexReader::isLocked(*String::Utf8Value(args[2])) ){
-                    printf("Index was locked... unlocking it.\n");
-                    IndexReader::unlock(*String::Utf8Value(args[2]));
-                }
+            Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
+            REQ_FUN_ARG(2, callback);
 
-                writer = _CLNEW IndexWriter( *String::Utf8Value(args[2]), &an, false);
-            }else{
-                writer = _CLNEW IndexWriter( *String::Utf8Value(args[2]) ,&an, true);
-            }
-        // We can tell the writer to flush at certain occasions
-          //writer->setRAMBufferSizeMB(0.5);
-          //writer->setMaxBufferedDocs(3);
+            search_baton_t* baton = new search_baton_t;
+            baton->lucene = lucene;
+            baton->index = new v8::String::Utf8Value(args[0]);
+            baton->search = new v8::String::Utf8Value(args[1]);
+            baton->callback = Persistent<Function>::New(callback);
 
-          // To bypass a possible exception (we have no idea what we will be indexing...)
-            writer->setMaxFieldLength(0x7FFFFFFFL); // LUCENE_INT32_MAX_SHOULDBE
+            lucene->Ref();
 
-          // Turn this off to make indexing faster; we'll turn it on later before optimizing
-            writer->setUseCompoundFile(false);
-
-            uint64_t str = Misc::currentTimeMillis();
-
-            Document doc;
-
-            doc.clear();
-
-            TCHAR path[CL_MAX_DIR];
-            STRCPY_AtoT(path,*String::Utf8Value(args[0]), CL_MAX_DIR);
-
-            TCHAR contents[CL_MAX_DIR];
-            STRCPY_AtoT(contents,*String::Utf8Value(args[1]), CL_MAX_DIR);
-
-            (&doc)->add( *_CLNEW Field(_T("path"), path, Field::STORE_YES | Field::INDEX_UNTOKENIZED ) );
-            (&doc)->add( *_CLNEW Field(_T("contents"), contents, Field::STORE_YES | Field::INDEX_TOKENIZED) );
-
-            writer->addDocument( &doc );
-
-          // Make the index use as little files as possible, and optimize it
-            writer->setUseCompoundFile(true);
-            writer->optimize();
-
-          // Close and clean up
-            writer->close();
-            _CLLDELETE(writer);
-
-            printf("Indexing took: %d ms.\n\n", (int32_t)(Misc::currentTimeMillis() - str));IndexWriter(*String::Utf8Value(args[2]), &an, false);
+            eio_custom(EIO_Search, EIO_PRI_DEFAULT, EIO_AfterSearch, baton);
+            ev_ref(EV_DEFAULT_UC);
 
             return scope.Close(Undefined());
         }
 
-        static Handle<Value> SearchFiles(const Arguments& args) {
-            HandleScope scope;
-            //Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
+        static int EIO_Search(eio_req* req) 
+        {
+            search_baton_t* baton = static_cast<search_baton_t*>(req->data);
 
-            //lucene->paths->Set(Number::New(0),String::New("foo"));
-            SearchData *search = SearchFilesC(*String::Utf8Value(args[0]), *String::Utf8Value(args[1]));
-            Handle<v8::Array> ar = v8::Array::New(arrsize);
-            //global vars ftw
-            for (int i = 0; i < arrsize; i++) {
-            //strcpy(utf,search[i].path);
-                ar->Set(i, String::New(search[i].path));
+            standard::StandardAnalyzer analyzer;
+            IndexReader* reader = IndexReader::open(*(*baton->index));
+            IndexReader* newreader = reader->reopen();
+            if ( newreader != reader ) {
+                _CLLDELETE(reader);
+                reader = newreader;
             }
+            IndexSearcher s(reader);
 
-            return scope.Close(ar);
+            TCHAR* searchString = STRDUP_AtoT(*(*baton->search));
+            Query* q = QueryParser::parse(searchString, _T(""), &analyzer);
+            Hits* hits = s.search(q);
+
+
+            HandleScope scope;
+            //_CLDELETE(q);
+            //free(searchString);
+            printf("Got %ld hits\n", hits->length());
+            // Build the result array
+            Local<v8::Array> resultArray = v8::Array::New();
+            for (size_t i=0; i < hits->length(); i++) {
+                Document& doc(hits->doc(i));
+                // {"id":"ab34", "score":1.0}
+                Local<Object> resultObject = Object::New();
+                // TODO:  This dup might be a leak
+                resultObject->Set(String::New("id"), String::New(STRDUP_TtoA(doc.get(_T("_id")))));
+                resultObject->Set(String::New("score"), Number::New(hits->score(i)));
+                resultArray->Set(i, resultObject);
+            }
+            baton->results = Persistent<v8::Array>::New(resultArray);
+
+            return 0;
+        }
+
+        static int EIO_AfterSearch(eio_req* req)
+        {
+            HandleScope scope;
+            search_baton_t* baton = static_cast<search_baton_t*>(req->data);
+            ev_unref(EV_DEFAULT_UC);
+            baton->lucene->Unref();
+
+            Handle<Value> argv[2];
+
+            argv[0] = Null(); // Error arg, defaulting to no error
+            argv[1] = baton->results;
+
+
+            TryCatch tryCatch;
+
+            baton->callback->Call(Context::GetCurrent()->Global(), 2, argv);
+
+            if (tryCatch.HasCaught()) {
+                FatalException(tryCatch);
+            }
+            
+            baton->callback.Dispose();
+            baton->results.Dispose();
+
+            delete baton;
+
+            return 0;
         }
 };
 
