@@ -302,7 +302,6 @@ class Lucene : public ObjectWrap {
             Query* q = QueryParser::parse(searchString, _T(""), &analyzer);
             Hits* hits = s.search(q);
 
-
             HandleScope scope;
             //_CLDELETE(q);
             //free(searchString);
