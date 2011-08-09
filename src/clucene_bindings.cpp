@@ -127,7 +127,7 @@ class Lucene : public ObjectWrap {
             s_ct->InstanceTemplate()->SetInternalFieldCount(1);
             s_ct->SetClassName(String::NewSymbol("Lucene"));
 
-            NODE_SET_PROTOTYPE_METHOD(s_ct, "addDocument", AddDocument);
+            NODE_SET_PROTOTYPE_METHOD(s_ct, "addDocument", AddDocumentAsync);
             NODE_SET_PROTOTYPE_METHOD(s_ct, "search", SearchAsync);
 
             target->Set(String::NewSymbol("Lucene"), s_ct->GetFunction());
@@ -143,63 +143,118 @@ class Lucene : public ObjectWrap {
             lucene->Wrap(args.This());
             return args.This();
         }
-
+        
+        struct index_baton_t
+        {
+            Lucene* lucene;         
+            Persistent<LuceneDocument>* doc;
+            v8::String::Utf8Value* index;
+            Persistent<Function> callback;
+            v8::Uint32 indexTime;
+        };
+        
         // args:
         //   Document* doc
         //   String* indexPath
-        static Handle<Value> AddDocument(const Arguments& args) {
+        static Handle<Value> AddDocumentAsync(const Arguments& args) {
             HandleScope scope;
-            IndexWriter* writer   = NULL;
+
+            Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
+            REQ_FUN_ARG(2, callback);
+
+            index_baton_t* baton = new index_baton_t;
+            baton->lucene = lucene;
+            baton->doc = (Persistent<LuceneDocument>*)ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
+            baton->index = new v8::String::Utf8Value(args[1]);
+            baton->callback = Persistent<Function>::New(callback);
+
+            lucene->Ref();
+
+            eio_custom(EIO_Index, EIO_PRI_DEFAULT, EIO_AfterIndex, baton);
+            ev_ref(EV_DEFAULT_UC);
+
+            return scope.Close(Undefined());
+        }
+            
+        
+        static int EIO_Index(eio_req* req) {
+            index_baton_t* baton = static_cast<index_baton_t*>(req->data);
+
+            IndexWriter* writer = NULL;
             lucene::analysis::standard::StandardAnalyzer an;
 
-            if (IndexReader::indexExists(*String::Utf8Value(args[1])) ){
-                if ( IndexReader::isLocked(*String::Utf8Value(args[1])) ){
+            if (IndexReader::indexExists((char*)baton->index)){
+                if ( IndexReader::isLocked((char*)baton->index)) {
                     printf("Index was locked... unlocking it.\n");
-                    IndexReader::unlock(*String::Utf8Value(args[1]));
+                    IndexReader::unlock((char*)baton->index);
                 }
-
-                writer            = _CLNEW IndexWriter( *String::Utf8Value(args[1]), &an, false);
+                writer = _CLNEW IndexWriter((char*)baton->index, &an, false);
             } else {
-                writer            = _CLNEW IndexWriter( *String::Utf8Value(args[1]) ,&an, true);
+                writer = _CLNEW IndexWriter((char*)baton->index, &an, true);
             }
-            printf("Setting writer to %s\n", *String::Utf8Value(args[1]));
-        // We can tell the writer to flush at certain occasions
-        //writer->setRAMBufferSizeMB(0.5);
-        //writer->setMaxBufferedDocs(3);
+            printf("Setting writer to %s\n", (char*)baton->index);
+            // We can tell the writer to flush at certain occasions
+            //writer->setRAMBufferSizeMB(0.5);
+            //writer->setMaxBufferedDocs(3);
 
-        // To bypass a possible exception (we have no idea what we will be indexing...)
+            // To bypass a possible exception (we have no idea what we will be indexing...)
             writer->setMaxFieldLength(0x7FFFFFFFL); // LUCENE_INT32_MAX_SHOULDBE
-
-        // Turn this off to make indexing faster; we'll turn it on later before optimizing
+            // Turn this off to make indexing faster; we'll turn it on later before optimizing
             writer->setUseCompoundFile(false);
+            uint64_t str = Misc::currentTimeMillis();
 
-            uint64_t str          = Misc::currentTimeMillis();
-
-            LuceneDocument* doc = ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
-            printf("Got a doc at %p->%p\n", doc, doc->document());
             try {
-                writer->addDocument(doc->document());
+              writer->addDocument((Document*)baton->doc);
             } catch (CLuceneError& E) {
-                printf("Got an exception: %s\n", E.what());
+              printf("Got an exception: %s\n", E.what());
             } catch(...) {
-                printf("Got an unknown exception\n");
+              printf("Got an unknown exception\n");
             }
 
             printf("Done adding document\n");
 
-        // Make the index use as little files as possible, and optimize it
+            // Make the index use as little files as possible, and optimize it
             writer->setUseCompoundFile(true);
             writer->optimize();
 
-        // Close and clean up
+            // Close and clean up
             writer->close();
             _CLLDELETE(writer);
 
-            printf("Indexing took: %d ms.\n\n", (int32_t)(Misc::currentTimeMillis() - str));
-            IndexWriter(*String::Utf8Value(args[1]), &an, false);
-            Local<Integer> millis = Int32::NewFromUnsigned((uint32_t)(Misc::currentTimeMillis() - str));
-            return scope.Close(millis);
+            baton->indexTime = (Misc::currentTimeMillis() - str);
+            
+            printf("Indexing took: %d ms.\n\n", baton->indexTime);
+            IndexWriter((char*)baton->index, &an, false);
+
+            return 0;
         }
+
+        static int EIO_AfterIndex(eio_req* req) {
+            HandleScope scope;
+            index_baton_t* baton = static_cast<index_baton_t*>(req->data);
+            ev_unref(EV_DEFAULT_UC);
+            baton->lucene->Unref();
+
+            Handle<Value> argv[2];
+
+            argv[0] = Null(); // Error arg, defaulting to no error
+            argv[1] = baton->indexTime;
+
+            TryCatch tryCatch;
+
+            baton->callback->Call(Context::GetCurrent()->Global(), 2, argv);
+
+            if (tryCatch.HasCaught()) {
+                FatalException(tryCatch);
+            }
+
+            baton->doc->Dispose();
+            baton->callback.Dispose();
+
+            delete baton;
+            return 0;
+        }
+        
 
         struct search_baton_t
         {

@@ -1,3 +1,6 @@
 indexes/tyler/*
 build/*
 .idea
+.lock-wscript
+test.lc
+*.swp
