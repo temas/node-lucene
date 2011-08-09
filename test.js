@@ -18,6 +18,11 @@ try {
 } catch (E) {
     console.log("Got " + E);
 }
+try {
+    doc.addField("id", "", 100);
+} catch(E) {
+    console.log("Got " + E);
+}
 doc.addField("_id", "1234", 65);
 doc.addField("name", "Thomas Muldowney", 33);
 
