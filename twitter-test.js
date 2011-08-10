@@ -7,8 +7,9 @@ var lucene = new cl.Lucene();
 if (!path.existsSync("tweets.lucene")) {
     var objects = fs.readFileSync("user_timeline.json", "utf8").split("\n");
     var counter = 0;
+    var indexCounter = 0;
     function done() {
-        console.log("Added " + counter + " entries");
+        console.log("Added " + counter + " entries in " + indexCounter/1000.0 + "s");
         doSearch();
     }
     function processNext() {
@@ -28,6 +29,7 @@ if (!path.existsSync("tweets.lucene")) {
             if (err) {
                 console.log("Error adding: " + err);
             }
+            indexCounter += indexTime;
             process.nextTick(processNext);
         });
         counter++;
@@ -39,7 +41,12 @@ if (!path.existsSync("tweets.lucene")) {
 
 function doSearch() {
     if (process.argv.length == 3) {
-        lucene.search("tweets.lucene", "content:" + process.argv[2], function(err, results) {
+        console.log("Searching for " + process.argv[2]);
+        lucene.search("tweets.lucene", "content:(" + process.argv[2] + ")", function(err, results) {
+            if (err) {
+                console.log("Search error: " + err);
+                return;
+            }
             console.dir(results);
             var objects = fs.readFileSync("user_timeline.json", "utf8").split("\n");
             objects = objects.map(function(objText) { 
