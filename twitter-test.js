@@ -47,7 +47,6 @@ function doSearch() {
                 console.log("Search error: " + err);
                 return;
             }
-            console.dir(results);
             var objects = fs.readFileSync("user_timeline.json", "utf8").split("\n");
             objects = objects.map(function(objText) { 
                 try {
