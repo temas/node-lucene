@@ -151,7 +151,7 @@ public:
         v8::String::Utf8Value* index;
         Persistent<Function> callback;
         uint64_t indexTime;
-        v8::String* error;
+        std::string error;
     };
     
     // args:
@@ -172,7 +172,7 @@ public:
         baton->doc = ObjectWrap::Unwrap<LuceneDocument>(args[0]->ToObject());
         baton->index = new v8::String::Utf8Value(args[1]);
         baton->callback = Persistent<Function>::New(callback);
-        baton->error = 0;
+        baton->error.clear();
         
         lucene->Ref();
 
@@ -215,11 +215,9 @@ public:
 
           baton->indexTime = (Misc::currentTimeMillis() - start);
         } catch (CLuceneError& E) {
-          printf("Got an exception: %s\n", E.what());
-          baton->error = *String::New(E.what());
+          baton->error.assign(E.what());
         } catch(...) {
-          printf("Got an unknown exception\n");
-          baton->error = *String::New("Got an unknown exception\n");
+          baton->error = "Got an unknown exception";
         }
         
         // Close and clean up
@@ -240,9 +238,8 @@ public:
 
         Handle<Value> argv[2];
 
-        if (baton->error != NULL) {
-            Local<String> err = baton->error;
-            argv[0] = Exception::Error(err);
+        if (!baton->error.empty()) {
+            argv[0] = v8::String::New(baton->error.c_str());
             argv[1] = Undefined();
         }
         else {
@@ -272,19 +269,25 @@ public:
         v8::String::Utf8Value* search;
         Persistent<Function> callback;
         Persistent<v8::Array> results;
+        std::string error;
     };
 
     static Handle<Value> SearchAsync(const Arguments& args) {
         HandleScope scope;
 
-        Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
+        REQ_STR_ARG(0);
+        REQ_STR_ARG(1);
         REQ_FUN_ARG(2, callback);
+
+        REQ_OBJ_TYPE(args.This(), Lucene);
+        Lucene* lucene = ObjectWrap::Unwrap<Lucene>(args.This());
 
         search_baton_t* baton = new search_baton_t;
         baton->lucene = lucene;
         baton->index = new v8::String::Utf8Value(args[0]);
         baton->search = new v8::String::Utf8Value(args[1]);
         baton->callback = Persistent<Function>::New(callback);
+        baton->error.clear();
 
         lucene->Ref();
 
@@ -299,34 +302,48 @@ public:
         search_baton_t* baton = static_cast<search_baton_t*>(req->data);
 
         standard::StandardAnalyzer analyzer;
-        IndexReader* reader = IndexReader::open(*(*baton->index));
+        IndexReader* reader = 0;
+        try {
+            reader = IndexReader::open(*(*baton->index));
+        } catch (CLuceneError& E) {
+          baton->error.assign(E.what());
+          return 0;
+        } catch(...) {
+          baton->error = "Got an unknown exception";
+          return 0;
+        }
         IndexReader* newreader = reader->reopen();
         if ( newreader != reader ) {
-            _CLLDELETE(reader);
+            delete reader;
             reader = newreader;
         }
         IndexSearcher s(reader);
 
-        TCHAR* searchString = STRDUP_AtoT(*(*baton->search));
-        Query* q = QueryParser::parse(searchString, _T(""), &analyzer);
-        Hits* hits = s.search(q);
+        try {
+            TCHAR* searchString = STRDUP_AtoT(*(*baton->search));
+            Query* q = QueryParser::parse(searchString, _T(""), &analyzer);
+            Hits* hits = s.search(q);
 
-        HandleScope scope;
-        //_CLDELETE(q);
-        //free(searchString);
-        printf("Got %ld hits\n", hits->length());
-        // Build the result array
-        Local<v8::Array> resultArray = v8::Array::New();
-        for (size_t i=0; i < hits->length(); i++) {
-            Document& doc(hits->doc(i));
-            // {"id":"ab34", "score":1.0}
-            Local<Object> resultObject = Object::New();
-            // TODO:  This dup might be a leak
-            resultObject->Set(String::New("id"), String::New(STRDUP_TtoA(doc.get(_T("_id")))));
-            resultObject->Set(String::New("score"), Number::New(hits->score(i)));
-            resultArray->Set(i, resultObject);
+            HandleScope scope;
+            //_CLDELETE(q);
+            free(searchString);
+            // Build the result array
+            Local<v8::Array> resultArray = v8::Array::New();
+            for (size_t i=0; i < hits->length(); i++) {
+                Document& doc(hits->doc(i));
+                // {"id":"ab34", "score":1.0}
+                Local<Object> resultObject = Object::New();
+                // TODO:  This dup might be a leak
+                resultObject->Set(String::New("id"), String::New(STRDUP_TtoA(doc.get(_T("_id")))));
+                resultObject->Set(String::New("score"), Number::New(hits->score(i)));
+                resultArray->Set(i, resultObject);
+            }
+            baton->results = Persistent<v8::Array>::New(resultArray);
+        } catch (CLuceneError& E) {
+          baton->error.assign(E.what());
+        } catch(...) {
+          baton->error = "Got an unknown exception";
         }
-        baton->results = Persistent<v8::Array>::New(resultArray);
 
         return 0;
     }
@@ -340,9 +357,13 @@ public:
 
         Handle<Value> argv[2];
 
-        argv[0] = Null(); // Error arg, defaulting to no error
-        argv[1] = baton->results;
-
+        if (baton->error.empty()) {
+            argv[0] = Null(); // Error arg, defaulting to no error
+            argv[1] = baton->results;
+        } else {
+            argv[0] = String::New(baton->error.c_str());
+            argv[1] = Null();
+        }
 
         TryCatch tryCatch;
 
@@ -353,8 +374,10 @@ public:
         }
         
         baton->callback.Dispose();
-        baton->results.Dispose();
+        if (!baton->results.IsEmpty()) baton->results.Dispose();
 
+        delete baton->index;
+        delete baton->search;
         delete baton;
 
         return 0;
